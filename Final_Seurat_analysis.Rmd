@@ -1,0 +1,267 @@
+---
+title: "KP Lung CD8 T-Cell 10X 5' Immune Profiling Pre-Processing"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+### Setup
+Load in package dependencies:
+```{r}
+library(Seurat)
+library(dplyr)
+library(patchwork)
+library(ggplot2)
+#library(future)
+```
+
+Set up output directory:
+```{r}
+od <- paste0("/Users/amandacruz/Dropbox (MIT)/SIIN vs SIY 10X/Final_Analysis/",Sys.Date(),"/") # this is where the output directory setup will be made
+dir.create(od) # run this line if you havent already made the output directory folder
+
+```
+
+Set input file paths and day code is executed. (Day will be appended to the beginning of all output files, for clarity)
+```{r}
+day <- paste0(Sys.Date(),"_") # this will automatically detect the date you are running the code
+
+siy.path <- "/Users/amandacruz/Dropbox (MIT)/SIIN vs SIY 10X/Seurat/Data/raw_siy_filteredbcmatrix"
+siin.path <- "/Users/amandacruz/Dropbox (MIT)/SIIN vs SIY 10X/Seurat/Data/raw_siin_filteredbcmatrix"
+
+antigens <- c("siin", "siy")
+an_colors = c(siin = "#F8766D",siy = "#00BFC4")
+```
+
+### Create Seurat Objects
+```{r}
+# Load Data
+siy.data <- Read10X(data.dir = siy.path)
+siin.data <- Read10X(data.dir = siin.path)
+
+# Create Seurat Objects
+siin <- CreateSeuratObject(counts = siin.data, project = "siin", min.cells = 3, min.features = 5)
+siy <- CreateSeuratObject(counts = siy.data, project = "siy", min.cells = 3, min.features = 5)
+```
+
+### Individual Library QC Metrics
+This will calculate various QC metrics for each library individually. This information is utilized to compare the differences between each library. 
+```{r}
+# define output subdirectory
+dir.create(paste0(od,"Pre-QC/"))
+dir.create(paste0(od,"Pre-QC/Individual_libraries/"))
+od.qc.indiv <- paste0(od,"Pre-QC/Individual_libraries/") 
+
+# quantify mitochondrial genes
+siin[["percent.mt"]] <- PercentageFeatureSet(siin, pattern = "^mt-") 
+siy[["percent.mt"]] <- PercentageFeatureSet(siy, pattern = "^mt-") 
+```
+
+Plot:
+```{r}
+# violin plots of QC metrics
+qc.indiv.vp <- list()
+
+qc.indiv.vp[[1]] <- VlnPlot(siin, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.25, cols = an_colors[1])
+qc.indiv.vp[[2]] <- VlnPlot(siy, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.25, cols = an_colors[2])
+
+# scatter plots of features
+qc.indiv.sp <- list()
+qc.indiv.sp[[1]] <- FeatureScatter(siin, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", cols = an_colors[1]) + ggtitle("Reads vs Genes Detected")
+qc.indiv.sp[[2]] <- FeatureScatter(siy, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", cols = an_colors[2]) + ggtitle("Reads vs Genes Detected")
+
+# save plots
+pdf(file=paste0(od.qc.indiv, day, "individual_qc_violinPlots.pdf"), height = 14, width = 9)
+wrap_plots(qc.indiv.vp, ncol = 1, nrow = 2)
+dev.off()
+
+pdf(file=paste0(od.qc.indiv, day, "individual_qc_scatterPlots_counts-vs-genes.pdf"), height = 14, width = 9)
+wrap_plots(qc.indiv.sp, ncol = 1, nrow = 2)
+dev.off()
+
+# visualize plots
+qc.indiv.vp
+qc.indiv.sp
+```
+
+```{r}
+# filter out cells that do not pass QC thresholds
+siin <- subset(siin, subset = nFeature_RNA > 100 & nFeature_RNA < 4000 & percent.mt < 5 & nCount_RNA < 20000)
+siy <- subset(siy, subset = nFeature_RNA > 100 & nFeature_RNA < 4000 & percent.mt < 5 & nCount_RNA < 20000)
+```
+
+Follow this code for standard normalization + merging:
+###### Normalization
+```{r}
+## normalize data ##
+siin <- NormalizeData(siin, normalization.method = "LogNormalize", scale.factor = 10000, vars.to.regress = "percent.mt")
+siy <- NormalizeData(siy, normalization.method = "LogNormalize", scale.factor = 10000, vars.to.regress = "percent.mt")
+
+# scale
+#siin <- ScaleData(siin, vars.to.regress = "percent.mt")
+#siy <- ScaleData(siy, vars.to.regress = "percent.mt")
+
+## variable feature detection ##
+siin <- FindVariableFeatures(siin, selection.method = "vst", nfeatures = 2000)
+siy <- FindVariableFeatures(siy, selection.method = "vst", nfeatures = 2000)
+
+top10.siin <- head(VariableFeatures(siin), 10)
+top10.siy <- head(VariableFeatures(siy), 10)
+
+
+# plot variable features with and without labels
+vfp <- VariableFeaturePlot(siin)
+vfp.l <- LabelPoints(plot = vfp, points = top10.siin, repel = TRUE)
+pdf(file=paste0(od.qc.indiv,day,"siin_variablegenes.pdf"),width=9,height=7)
+vfp + vfp.l
+dev.off()
+
+vfp2 <- VariableFeaturePlot(siy)
+vfp2.l <- LabelPoints(plot = vfp2, points = top10.siy, repel = TRUE)
+pdf(file=paste0(od.qc.indiv,day,"siy_variablegenes.pdf"),width=9,height=7)
+vfp2 + vfp2.l
+dev.off()
+
+```
+
+### Merge Datasets
+```{r}
+# combine into one seurat object
+siin <- ScaleData(siin, vars.to.regress = "percent.mt")
+siy <- ScaleData(siy, vars.to.regress = "percent.mt")
+
+cd8 <- merge(siin, y = siy, add.cell.ids = c("siin", "siy"), project = "kplung_cd8", merge.data = TRUE)
+
+# clear memory
+rm(siin.data, siy.data)
+```
+
+Plot QC metrics post filtering:
+```{r}
+# output subdirectory
+dir.create(paste0(od,"Post-QC/"))
+dir.create(paste0(od,"Post-QC/merged/"))
+od.qc.m <- paste0(od,"Post-QC/merged/") 
+
+# save file
+pdf(file=paste0(od.qc.m,day,"merge_postQC_violin.pdf"),width=9,height=7)
+VlnPlot(cd8, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0.25)
+dev.off()
+
+# visualize in notebook
+VlnPlot(cd8, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size=0.25)
+```
+
+#### Add in VDJ & Hashing Data
+At this point, as part of the QC filtering, we would like to filter out empirically determined doublets. These doublets are detected using TotalSeqC antibody hashing. The premise is that cells with a hashing ID that come from more than one mouse are likely doublets. This processing uses a combination of Python and R, broken up in multiple notebooks.
+
+Export cell IDs to CSV:
+```{r}
+dir.create(paste0(od,"Metadata/"))
+od.md <- paste0(od,"Metadata/")
+write.csv(cd8@meta.data, file = paste0(od.md,day,"md_prefilter.csv"))
+```
+
+At this point, we will use python to fill in information about cells to add to the metadata, add in VDJ information, and add in Hashing. The Hashing analysis/processing is covered in a separate notebook. 
+
+###### Load metadata: 
+```{r}
+md <- read.csv(file = paste0(od.md, day, "md_posthash.csv"))
+cd8[['demux']] = md[['demux']]
+md[['top_clonotypes']] = factor(md[['top_clonotypes']])
+cd8 = RenameCells(cd8, new.names = md[['barcode']]) 
+```
+
+#### Remove Doublets
+```{r}
+cd8 = SetIdent(cd8, value='demux')
+not_doublets <- WhichCells(object = cd8, idents = 'Doublet', invert = TRUE)
+cd8 <- cd8[,not_doublets]
+```
+
+At this point, we will use another python script (see XXX notebook) to import ProjectTIL metadata and perform clonotype calculations after filtering out the doublets. This will be the final metadata that doesn't include calculations made by Seurat and other downstream analyses. 
+```{r}
+write.csv(cd8@meta.data,paste0(od.md,day,"md_doublets_out.csv"))
+```
+Load in final metadata:
+```{r}
+md <- read.csv(file = paste0(od.md, day, "md_final.csv"))
+md = data.frame(md)
+
+# add as metadata; this was glitchy so its not done in a standard way
+for (i in colnames(md)) {
+  cd8[[i]] = md[[i]]
+}
+```
+
+#### Save PreProcessed Seurat Object
+```{r}
+
+saveRDS(cd8,paste0(od,day,"preprocessed_norm_seurat.rds"))
+```
+
+```{r}
+all.genes <- rownames(cd8)
+cd8 <- FindVariableFeatures(cd8, selection.method = "vst", nfeatures = 2000)
+cd8 <- ScaleData(cd8, features = all.genes)
+#cd8 <- SCTransform(cd8, vars.to.regress = "percent.mt", verbose = T, min_cells = 3)
+```
+
+Load in final metadata:
+```{r}
+md <- read.csv(file = paste0(od.md, day, "md_final.csv"))
+md = data.frame(md)
+
+# add as metadata; this was glitchy so its not done in a standard way
+for (i in colnames(md)) {
+  cd8[[i]] = md[[i]]
+}
+```
+# Dimensionality Reduction
+###### Preprocessing PCA
+```{r}
+
+cd8 <- RunPCA(cd8,  features = VariableFeatures(object = cd8))
+```
+
+###### PCA Outputs
+Set outputs:
+```{r}
+dir.create(paste0(od,"dimensionality_reduction/"))
+od.dr <- paste0(od,"dimensionality_reduction/")
+```
+
+```{r}
+# plot first couple PCs and visualize dimensions
+pdf(file=paste0(od.dr,day,"merge_PCA1.pdf"), width=9, height=7)
+DimPlot(cd8, reduction = "pca")
+dev.off()
+
+pdf(file=paste0(od.dr,day,"PCA1_heatmap.pdf"), width=9, height=7)
+DimHeatmap(cd8, dims = 1, cells = 500, balanced = TRUE)
+dev.off()
+
+pdf(file=paste0(od.dr,day,"PCAplus_heatmap.pdf"), width=9, height=7)
+DimHeatmap(cd8, dims = 1:5, cells = 500, balanced = TRUE)
+dev.off()
+
+# plot PCs in the upper range of the predicted # of PCs by JackStraw/Elbow plots for downstream dimensionality reductions 
+pdf(file=paste0(od.dr,day,"PCA25-35_heatmap.pdf"), width=9, height=7)
+DimHeatmap(cd8, dims = 25:35, cells = 500, balanced = TRUE)
+dev.off()
+
+```
+
+###### Clustering & UMAP
+```{r}
+cd8 <- FindNeighbors(cd8, dims = 1:30)
+
+```
+
+```{r}
+cd8 <- FindClusters(cd8, resolution = 0.7)
+cd8 <- RunUMAP(cd8, dims = 1:30, seed.use = 42)
+DimPlot(cd8, reduction = "umap")
+```
+
