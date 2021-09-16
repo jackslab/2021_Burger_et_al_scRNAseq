@@ -7,3 +7,5 @@ Data and code for mouse scRNA-seq analysis in:
 For the human scRNA-seq data and code please refer to the following repository: https://github.mit.edu/AJBhutkarCompBioGroup/2021_Burger_et_al_human_scRNAseq
 
 Raw data can be accessed with GEO: GSE164177
+
+If there are any technical problems or questions, please submit an "Issue".
