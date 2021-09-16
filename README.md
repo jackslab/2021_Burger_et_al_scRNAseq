@@ -1,4 +1,4 @@
-# 2021_Burger_et_al_scRNAseq (under development)
+# 2021_Burger_et_al_scRNAseq
 
 Data and code for mouse scRNA-seq analysis in:
 
