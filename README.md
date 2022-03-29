@@ -9,3 +9,6 @@ For the human scRNA-seq data and code please refer to the following repository: 
 Raw data can be accessed with GEO: GSE164177
 
 If there are any technical problems or questions, please submit an "Issue".
+
+
+To reproduce clonotype clustering, please see "S4A" of the figures notebook. 
